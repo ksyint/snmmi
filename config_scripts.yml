@@ -1,0 +1,52 @@
+---
+- name: Run on server 1
+  hosts: "{{ grp }}"
+  strategy: free
+  gather_facts: no
+  vars_files:
+    - ./pwds/secrets.yml  # 암호화된 변수 파일
+  become: yes
+
+  vars:
+    hpc_basepath: "/home2/{{ ansible_user }}/{{ inventory_hostname }}" # HPC용 basepath 정의
+    vessl_basepath: "/root" # VESSL용 basepath 정의
+    basepath: "{{ lookup('vars', grp + '_basepath') }}" # grp 값에 따라서 동적으로 basepath 설정
+    folders_to_copy:
+      - { src: "GaainApp.py", dest: "{{ basepath }}/GaainApp.py" }
+      - { src: "models/unet.py", dest: "{{ basepath }}/models/" }
+      - { src: "models/__init__.py", dest: "{{ basepath }}/models/" }
+      - { src: "dsets/", dest: "{{ basepath }}/dsets/" }
+      - { src: "modules/", dest: "{{ basepath }}/modules/" }
+      - { src: "utils/", dest: "{{ basepath }}/utils/" }
+      - { src: "src/", dest: "{{ basepath }}/src/" }
+
+  tasks:
+    - name: Check if dynamic variable exists
+      set_fact:
+        variable_exists: "{{ (grp + '_basepath') in vars }}"
+
+    # - name: Check if the basepath exists
+    #   stat:
+    #     path: "{{ basepath }}"
+    #   register: basepath_check
+
+    - name: Create a directory if it does not exist
+      file:
+        path: "{{ basepath }}"
+        state: directory
+        mode: '0755'  # Set the permissions (optional)
+        owner: "{{ ansible_user }}"  # Set the owner of the directory
+        # group: "{{ ansible_user }}"  # Set the group of the directory (or use a group that dwnusa is a member of)
+      become: yes  # Use become to change ownership, requires appropriate privileges
+      when: variable_exists
+
+    - name: Copy multiple folders and files
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        directory_mode: "0755"
+        owner: "{{ ansible_user }}"  # Set the owner of the directory
+        force: yes
+      loop: "{{ folders_to_copy }}"
+      become: yes  # Use become to change ownership, requires appropriate privileges
+      when: variable_exists

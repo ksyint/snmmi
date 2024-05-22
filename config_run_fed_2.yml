@@ -1,0 +1,213 @@
+---
+- name: Run on server 1
+  hosts: localhost
+  strategy: linear
+  gather_facts: no
+  vars_files:
+    - ./pwds/secrets.yml  # 암호화된 변수 파일
+  vars:
+    isinit: "{{ init | default(True) }}"
+    start_offset: "{{ offset | default(0) }}"
+    counter: "{{ cnt | default(1) }}"
+    counter_end: "{{ end | default(2) }}"
+    epoch: "{{ epc | default(5) }}"
+
+  tasks:
+    - name: Print current counter value
+      debug:
+        msg: "FEDERATED: start counter ({{ counter }}) and counter_end ({{ counter_end }}), epoch ({{ epoch }})"
+        
+    - name: Create directory and copy files
+      command: "mkdir -p models/{{ grp }}/{{ proj }}"
+      when: 
+        - counter|int > 1
+        - isinit
+        
+    - name: Copy model
+      shell: "mkdir -p models/{{ grp }}/{{ proj }} && cp -r models/{{ grp }}/{{ bm }}/{{ grp }}_*_{{ counter|int -1 }}.state models/{{ grp }}/{{ proj }}/"
+      when: 
+        - counter|int > 1
+        - isinit
+
+    - name: Copy config.py to config-project_name.py
+      copy:
+        src: "utils/config.py"
+        dest: "utils/config-{{ proj }}.py"
+      when: isinit
+      
+    - name: Execute Command GaainFed.py
+      command:
+        cmd: 'python3 GaainFed.py -CNT {{ counter }} -ANL 4 -EPC {{ epoch }} -GRP {{ grp }} -PRJ {{ proj }} -SVR avg "FEDERATED: {{ counter }}/{{ counter_end }}"'
+      register: res
+
+    - name: Print GaainFed.py Return
+      debug:
+        msg: "{{ res.stdout }}"
+        
+
+- name: Execute python app
+  hosts: "{{ grp }}"
+  strategy: free
+  gather_facts: no
+  vars_files:
+    - ./pwds/secrets.yml  # 암호화된 변수 파일
+  vars:
+    isinit: "{{ init | default(True) }}"
+    start_offset: "{{ offset | default(0) }}"
+    hpc_basepath: "/home2/{{ ansible_user }}/{{ inventory_hostname }}" # HPC용 basepath 정의
+    vessl_basepath: "/root" # VESSL용 basepath 정의
+    basepath: "{{ lookup('vars', grp + '_basepath') }}" # grp 값에 따라서 동적으로 basepath 설정
+    
+    folders_to_copy:
+      - { src: "GaainApp.py", dest: "{{ basepath }}/GaainApp.py" }
+      - { src: "models/unet.py", dest: "{{ basepath }}/models/" }
+      - { src: "models/__init__.py", dest: "{{ basepath }}/models/" }
+      - { src: "dsets/", dest: "{{ basepath }}/dsets/" }
+      - { src: "modules/", dest: "{{ basepath }}/modules/" }
+      - { src: "utils/config.py", dest: "{{ basepath }}/utils/" }
+      - { src: "utils/logconf.py", dest: "{{ basepath }}/utils/" }
+      - { src: "utils/tools.py", dest: "{{ basepath }}/utils/" }
+      - { src: "src/", dest: "{{ basepath }}/src/" }
+      
+    counter: "{{ cnt | default(1) }}"
+    counter_end: "{{ end | default(2) }}"
+    epoch: "{{ epc | default(5) }}"
+    # 기본값 설정
+
+    hpc_vm100_1: { cmd: "python3 GaainApp.py -OFF {{ start_offset }} -CNT {{ counter }} -ANL 0 -VLC 3 -EPC {{ epoch }} -GRP {{ grp }} -PRJ {{ proj }} -SVR {{ inventory_hostname }} 'FEDERATED: {{ counter }}/{{ counter_end }}'" }
+    hpc_vm100_2: { cmd: "python3 GaainApp.py -OFF {{ start_offset }} -CNT {{ counter }} -ANL 1 -VLC 3 -EPC {{ epoch }} -GRP {{ grp }} -PRJ {{ proj }} -SVR {{ inventory_hostname }} 'FEDERATED: {{ counter }}/{{ counter_end }}'" }
+
+    hpc_vp100_1: { cmd: "python3 GaainApp.py -OFF {{ start_offset }} -CNT {{ counter }} -ANL 2 -VLC 3 -EPC {{ epoch }} -GRP {{ grp }} -PRJ {{ proj }} -SVR {{ inventory_hostname }} 'FEDERATED: {{ counter }}/{{ counter_end }}'" }
+    hpc_vp100_2: { cmd: "python3 GaainApp.py -OFF {{ start_offset }} -CNT {{ counter }} -ANL 3 -VLC 3 -EPC {{ epoch }} -GRP {{ grp }} -PRJ {{ proj }} -SVR {{ inventory_hostname }} 'FEDERATED: {{ counter }}/{{ counter_end }}'" }
+
+    hpc_vv100_1: { cmd: "python3 GaainApp.py -OFF {{ start_offset }} -CNT {{ counter }} -ANL 4 -VLC 3 -EPC {{ epoch }} -GRP {{ grp }} -PRJ {{ proj }} -SVR {{ inventory_hostname }} 'FEDERATED: {{ counter }}/{{ counter_end }}'" }
+    hpc_vv100_2: { cmd: "python3 GaainApp.py -OFF {{ start_offset }} -CNT {{ counter }} -ANL 5 -VLC 3 -EPC {{ epoch }} -GRP {{ grp }} -PRJ {{ proj }} -SVR {{ inventory_hostname }} 'FEDERATED: {{ counter }}/{{ counter_end }}'" }
+    
+  tasks:
+    - name: Check if dynamic variable exists
+      set_fact:
+        variable_exists: "{{ (grp + '_' + inventory_hostname) in vars }}"
+        
+    # - name: Check if dynamic variable exists
+    #   set_fact:
+    #     start_offset: "{{ counter | int - 1}}"
+    #   when: 
+    #     - isinit
+    
+    - name: Create a directory if it does not exist
+      file:
+        path: "{{ basepath }}"
+        state: directory
+        mode: '0755'  # Set the permissions (optional)
+        owner: "{{ ansible_user }}"  # Set the owner of the directory
+        # group: "{{ ansible_user }}"  # Set the group of the directory (or use a group that dwnusa is a member of)
+      become: yes  # Use become to change ownership, requires appropriate privileges
+      when: 
+        - variable_exists
+        - (counter | int == 1) or isinit
+
+    - name: Copy multiple folders and files
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        directory_mode: "0755"
+        owner: "{{ ansible_user }}"  # Set the owner of the directory
+        force: yes
+      loop: "{{ folders_to_copy }}"
+      become: yes  # Use become to change ownership, requires appropriate privileges
+      when: 
+        - variable_exists
+        - (counter | int == 1) or isinit
+    
+    - name: Set dynamic variable
+      set_fact:
+        selected_var: "{{ vars[grp + '_' + inventory_hostname] }}"
+      when: variable_exists
+
+    - name: Create a directory if it does not exist
+      file:
+        path: "{{ basepath }}/models/{{ grp }}/{{ proj }}"
+        state: directory
+        mode: '0755'  # Set the permissions (optional)
+      when: variable_exists
+
+    - name: Copy server's model to remote nodes
+      copy:
+        src: "models/{{ grp }}/{{ proj }}/init_model.state"
+        dest: "{{ basepath }}/models/{{ grp }}/{{ proj }}/init_model.state"
+        mode: '0644'
+      when: 
+        - variable_exists
+        - counter | int == 1
+
+    - name: Copy server's model to remote nodes
+      copy:
+        src: "models/{{ grp }}/{{ proj }}/{{ grp }}_avg_{{ counter }}.state"
+        dest: "{{ basepath }}/models/{{ grp }}/{{ proj }}/{{ grp }}_avg_{{ counter }}.state"
+        mode: '0644'
+      when: 
+        - variable_exists
+        - counter | int > 1
+
+    - name: Execute Command
+      command:
+        cmd: "{{ selected_var.cmd }}"
+      args:
+        chdir: "{{ basepath }}" # Change to /tmp directory before executing the ls command
+      when: variable_exists
+
+    # - name: Ensure destination directory exists
+    #   local_action:
+    #     module: file
+    #     path: "models/{{ grp }}/{{ proj }}"
+    #     state: directory
+    #   when: variable_exists
+
+    - name: Fetch pt file to local system
+      fetch:
+        src: "{{ basepath }}/models/{{ grp }}/{{ proj }}/{{ grp }}_{{ inventory_hostname }}_{{ counter }}.state"
+        dest: "models/{{ grp }}/{{ proj }}/{{ grp }}_{{ inventory_hostname }}_{{ counter }}.state"
+        flat: yes
+      when: variable_exists
+        
+    
+
+# 서버에서는 학습하지 않고 모델을 aggregation만 한다 (여기부터 반복함)
+
+- name: Run on server 2
+  hosts: localhost
+  strategy: linear
+  gather_facts: no
+  vars_files:
+    - ./pwds/secrets.yml  # 암호화된 변수 파일
+  vars:
+    ansible_playbook_filename: config_run_fed_2.yml
+    isinit: "{{ init | default(True) }}"
+    start_offset: "{{ offset | default(0) }}"
+    counter: "{{ cnt | default(1) }}"
+    counter_end: "{{ end | default(2) }}"
+    epoch: "{{ epc | default(5) }}"
+  
+  tasks:
+    # - name: Check if dynamic variable exists
+    #   set_fact:
+    #     start_offset: "{{ counter | int - 1}}"
+    #   register: res
+    #   when: 
+    #     - isinit
+        
+    # - name: Print start_offset
+    #   debug:
+    #     msg: "{{ start_offset }}"
+    #   when: 
+    #     - isinit
+        
+    - name: Increment counter
+      set_fact:
+        counter: "{{ counter | int + 1 }}"
+        
+    - name: Check rerun condition and rerun playbook if necessary
+      command: 
+        cmd: "ansible-playbook -i ./{{ inventory_file }}  --vault-password-file ./pwds/vault_password.txt ./{{ ansible_playbook_filename }} -e 'inventory_file={{ inventory_file }} grp={{ grp }} proj={{ proj }} epc={{ epoch }} offset={{ start_offset }} cnt={{ counter }} end={{ counter_end }} init=False'"
+      when: counter | int <= counter_end | int
+      

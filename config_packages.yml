@@ -1,0 +1,36 @@
+---
+- name: Setup Packages
+  hosts: "{{ grp }}"
+  strategy: free
+  gather_facts: no
+  vars_files:
+    - ./pwds/secrets.yml  # 암호화된 변수 파일
+  become: yes
+
+  tasks:
+    - name: python check
+      command:
+        cmd: "python3 --version"
+      register: python_check_result
+      
+    - name: python3 check result
+      debug:
+        msg: "{{ python_check_result.stdout }}"
+
+    - name: Upgrade pip in the virtual environment
+      command:
+        cmd: "python3 -m pip install --upgrade pip"
+      register: result1
+
+    - name: Display the result1
+      debug:
+        var: result1.stdout
+
+    - name: Install 'torchio torchsummary SimpleITK tqdm opencv-python tensorboard natsort pandas matplotlib jupyterlab'
+      command:
+        cmd: "pip3 install torchio torchsummary SimpleITK tqdm opencv-python tensorboard natsort pandas matplotlib jupyterlab"
+      register: result2
+
+    - name: Display the result2
+      debug:
+        var: result2.stdout
